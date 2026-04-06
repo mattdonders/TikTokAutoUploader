@@ -8,11 +8,20 @@ from inference_sdk import InferenceHTTPClient
 import pkg_resources
 import requests
 from PIL import Image
-import sys
 import os
 import warnings
 
 warnings.simplefilter("ignore")
+
+
+class TikTokUploadError(RuntimeError):
+    """Raised when a TikTok upload fails or cannot be confirmed.
+
+    Replaces sys.exit() so callers can catch upload failures without
+    SystemExit propagating to the host process (critical in async
+    and multi-threaded environments).
+    """
+    pass
 
 UPLOAD_URL = "https://www.tiktok.com/tiktokstudio/upload?from=upload&lang=en"
 DRAFT_URL = "https://www.tiktok.com/tiktokstudio/content?tab=draft"
@@ -89,7 +98,7 @@ def run_javascript(proxy_data=None):
             text=True,
         )
     except Exception as e:
-        sys.exit(f"Error while running the JavaScript file, when trying to parse cookies: {e}")
+        raise TikTokUploadError(f"Error while running the JavaScript file, when trying to parse cookies: {e}")
     return result
 
 
@@ -126,7 +135,7 @@ def read_cookies(cookies_path):
 
         cookie_read = True
     except Exception:
-        sys.exit("ERROR: CANT READ COOKIES FILE")
+        raise TikTokUploadError("ERROR: CANT READ COOKIES FILE")
 
     return cookies, cookie_read
 
@@ -482,7 +491,7 @@ def _load_or_create_cookies(accountname, proxy):
         os.rename("TK_cookies.json", cookies_path)
         cookies, cookie_read = read_cookies(cookies_path)
         if not cookie_read:
-            sys.exit("ERROR READING COOKIES")
+            raise TikTokUploadError("ERROR READING COOKIES")
 
     return cookies
 
@@ -496,7 +505,7 @@ def _goto_with_retry(page, url):
             retries += 1
             time.sleep(5)
             if retries == 2:
-                sys.exit("ERROR: TIK TOK PAGE FAILED TO LOAD, try again.")
+                raise TikTokUploadError("ERROR: TIK TOK PAGE FAILED TO LOAD, try again.")
         else:
             break
 
@@ -576,7 +585,7 @@ def _solve_captcha_if_needed(page, suppressprint):
             time.sleep(0.5)
 
             if attempts > 5:
-                sys.exit("FAILED TO SOLVE CAPTCHA")
+                raise TikTokUploadError("FAILED TO SOLVE CAPTCHA")
 
             showedup = False
             while not showedup:
@@ -637,7 +646,7 @@ def _solve_captcha_if_needed(page, suppressprint):
             time.sleep(1)
 
             if attempts > 20:
-                sys.exit("FAILED TO SOLVE CAPTCHA")
+                raise TikTokUploadError("FAILED TO SOLVE CAPTCHA")
 
             showedup = False
             while not showedup:
@@ -657,7 +666,7 @@ def _set_video_input(page, video):
     try:
         page.set_input_files('input[type="file"][accept="video/*"]', f"{video}")
     except Exception:
-        sys.exit(
+        raise TikTokUploadError(
             "ERROR: FAILED TO INPUT FILE. Possible Issues: Wifi too slow, file directory wrong, or check documentation to see if captcha is solvable"
         )
 
@@ -682,7 +691,7 @@ def _add_description_and_hashtags(page, sim, video, description, hashtags, steal
 
     time.sleep(0.5)
     if description is None:
-        sys.exit("ERROR: PLEASE INCLUDE A DESCRIPTION")
+        raise TikTokUploadError("ERROR: PLEASE INCLUDE A DESCRIPTION")
 
     for _ in range(len(video) + 2):
         page.keyboard.press("Backspace")
@@ -728,14 +737,14 @@ def _wait_for_upload_ready(page):
     try:
         page.wait_for_selector('button:has-text("Post")[aria-disabled="false"]', timeout=12000000)
     except Exception:
-        sys.exit(
+        raise TikTokUploadError(
             "ERROR: TIK TOK TOOK TOO LONG TO UPLOAD YOUR FILE (>20min). Try again, if issue persists then try a lower file size or different wifi connection"
         )
 
 
 def _validate_schedule_request(schedule, day):
     if (schedule is None) and (day is not None):
-        sys.exit(
+        raise TikTokUploadError(
             "ERROR: CANT SCHEDULE FOR ANOTHER DAY USING 'day' WITHOUT ALSO INCLUDING TIME OF UPLOAD WITH 'schedule'; PLEASE ALSO INCLUDE TIME WITH 'schedule' PARAMETER"
         )
 
@@ -756,11 +765,11 @@ def _apply_schedule(page, schedule, day, stealth, suppressprint):
         hour = schedule[0:2]
         minute = schedule[3:]
         if (int(minute) % 5) != 0:
-            sys.exit(
+            raise TikTokUploadError(
                 "MINUTE FORMAT ERROR: PLEASE MAKE SURE MINUTE YOU SCHEDULE AT IS A MULTIPLE OF 5 UNTIL 60 (i.e: 40), VIDEO SAVED AS DRAFT"
             )
     except Exception:
-        sys.exit(
+        raise TikTokUploadError(
             "SCHEDULE TIME ERROR: PLEASE MAKE SURE YOUR SCHEDULE TIME IS A STRING THAT FOLLOWS THE 24H FORMAT 'HH:MM', VIDEO SAVED AS DRAFT"
         )
 
@@ -791,7 +800,7 @@ def _apply_schedule(page, schedule, day, stealth, suppressprint):
                 time.sleep(1)
             page.locator(f'span.day.valid:text-is("{day}")').click()
         except Exception:
-            sys.exit(
+            raise TikTokUploadError(
                 "SCHEDULE DAY ERROR: ERROR WITH SCHEDULED DAY, read documentation for more information on format of day"
             )
 
@@ -825,7 +834,7 @@ def _apply_schedule(page, schedule, day, stealth, suppressprint):
         if not suppressprint:
             print("Done scheduling video")
     except Exception:
-        sys.exit("SCHEDULING ERROR: VIDEO SAVED AS DRAFT")
+        raise TikTokUploadError("SCHEDULING ERROR: VIDEO SAVED AS DRAFT")
 
 
 def _adjust_sound_volume_upload(page, sound_aud_vol, stealth):
@@ -874,7 +883,7 @@ def _pick_sound(page, sound_name, sim, stealth, suppressprint, search_mode):
         sound_found = select_sound_from_search(page, sound_name, sim=sim, stealth=stealth)
 
     if not sound_found:
-        sys.exit(f"ERROR: SOUND '{sound_name}' NOT FOUND")
+        raise TikTokUploadError(f"ERROR: SOUND '{sound_name}' NOT FOUND")
 
 
 def _add_sound_from_upload_page(page, sound_name, sound_aud_vol, sim, stealth, suppressprint, search_mode):
@@ -900,7 +909,7 @@ def _add_sound_from_upload_page(page, sound_name, sound_aud_vol, sim, stealth, s
         try:
             _adjust_sound_volume_upload(page, sound_aud_vol, stealth)
         except Exception:
-            sys.exit("ERROR ADJUSTING SOUND VOLUME: please try again or use the default 'mix'.")
+            raise TikTokUploadError("ERROR ADJUSTING SOUND VOLUME: please try again or use the default 'mix'.")
 
     page.wait_for_selector("button:has-text('Save')")
     if stealth:
@@ -926,7 +935,7 @@ def _run_upload_copyright_check(page, stealth, suppressprint):
                 print("Copyright check complete")
             break
         if page.locator("span:has-text('Copyright issues detected')").is_visible():
-            sys.exit("COPYRIGHT CHECK FAILED: VIDEO SAVED AS DRAFT, COPYRIGHT AUDIO DETECTED FROM TIKTOK")
+            raise TikTokUploadError("COPYRIGHT CHECK FAILED: VIDEO SAVED AS DRAFT, COPYRIGHT AUDIO DETECTED FROM TIKTOK")
 
         copy_check_counter += 1
         if copy_check_counter > 10:
@@ -983,7 +992,7 @@ def _submit_upload(page, schedule, stealth, suppressprint, post_success_wait, sc
             print("Done uploading video, NOTE: it may take a minute or two to show on TikTok")
     except Exception:
         time.sleep(2)
-        sys.exit(
+        raise TikTokUploadError(
             "POSSIBLE ERROR UPLOADING: Cannot confirm if uploaded successfully, Please check account in a minute or two to confirm."
         )
 
@@ -1034,10 +1043,10 @@ def upload_tiktok(
     try:
         validate_proxy(proxy)
     except Exception as e:
-        sys.exit(f"Error validating proxy: {e}")
+        raise TikTokUploadError(f"Error validating proxy: {e}")
 
     if accountname is None:
-        sys.exit("PLEASE ENTER NAME OF ACCOUNT TO POST ON, READ DOCUMENTATION FOR MORE INFO")
+        raise TikTokUploadError("PLEASE ENTER NAME OF ACCOUNT TO POST ON, READ DOCUMENTATION FOR MORE INFO")
 
     cookies = _load_or_create_cookies(accountname, proxy)
 
@@ -1103,10 +1112,10 @@ def upload_tiktok(
                 if stealth:
                     time.sleep(1)
                 page.click('button:has-text("Save draft")', timeout=10000)
-                sys.exit("ERROR ADDING SOUND: Video saved as draft, please try again or check documentation for more info")
+                raise TikTokUploadError("ERROR ADDING SOUND: Video saved as draft, please try again or check documentation for more info")
                 return "Error"
             except Exception:
-                sys.exit("ERROR ADDING SOUND; SAVE AS DRAFT BUTTON NOT FOUND SO VIDEO NOT ADDED AS DRAFT")
+                raise TikTokUploadError("ERROR ADDING SOUND; SAVE AS DRAFT BUTTON NOT FOUND SO VIDEO NOT ADDED AS DRAFT")
                 return "Error"
 
 

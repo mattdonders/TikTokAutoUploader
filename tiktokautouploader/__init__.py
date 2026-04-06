@@ -1,3 +1,3 @@
-from .function import upload_tiktok
+from .function import upload_tiktok, TikTokUploadError
 
-__all__ = ['upload_tiktok']
+__all__ = ['upload_tiktok', 'TikTokUploadError']
